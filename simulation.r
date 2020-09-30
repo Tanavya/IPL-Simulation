@@ -266,8 +266,8 @@ saveRDS(wides1.sim,"wides1.sim.rds")
 
 #Duckworth-Lewis resources table (ball by ball)
 library(haven)
-resource.table = read.csv("C:/Users/Administrator/Downloads/twenty20.csv",header = T)
-View(resource.table)
+resource.table = read.csv("~/Projects/IPL-Simulation/data/dls.csv",header = T)
+# View(resource.table)
 resource.table = resource.table[-1,]
 resource.table = resource.table[,-c(1,2)]
 resource.table = rbind(resource.table,numeric(10))
@@ -275,13 +275,14 @@ resource.table = cbind(resource.table,numeric(121))
 rownames(resource.table) = 120:0
 colnames(resource.table) = 10:0
 r = resource.table/100
-View(r)
+# View(r)
 
 #Resources lost due to wicket
 y = array(dim = c(121,10))
 for (i in 1:10){
   y[,i] = r[,i] - r[,(i+1)]
 }
+View(y)
 y = as.data.frame(y)
 colnames(y) = 1:10
 y = y[-121,]
