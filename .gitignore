@@ -1,0 +1,3 @@
+*.pynb_checkpoints/
+*.DS_store
+*.2018-2019-20k-iterations/trace/
