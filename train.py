@@ -16,7 +16,7 @@ import math
 import pandas as pd
 import sys
 from model import create_model
-from helper import load_data, get_situation, get_outcome
+from helper import initialise, load_data, get_situation, get_outcome
 
 print("Running on PyMC3 v{}".format(pm.__version__))
 
