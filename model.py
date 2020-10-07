@@ -2,7 +2,7 @@ import pymc3 as pm
 import pymc3.distributions.transforms as tr
 
 def create_model(batsmen, bowlers, id1, id2, X):
-    testval = [[-5 + x * (2 * 5)/5.0 for x in range(6)] for i in range(0, 9)]
+    testval = [[-5,0,1,2,3.5,5] for i in range(0, 9)]
     l = [i for i in range(9)]
     model = pm.Model()
     with model:
