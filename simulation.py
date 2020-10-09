@@ -12,257 +12,468 @@ import theano.tensor as tt
 import random
 import math
 import pandas as pd
-from pymc3.math import *
+from helper import load_data, initialise, get_situation, get_outcome
+from model import create_model
 
 print("Running on PyMC3 v{}".format(pm.__version__))
 
-def get_situation(w, b):
-    if 0 <= w and w <= 3:
-        if 1 <= b and b <= 36:
-            return 1
-        elif 90 <= b and b <= 96:
-            return 2
-        else:
-            return 3
-    elif 4 <= w and w <= 6:
-        if 1 <= b and b <= 36:
-            return 4
-        elif 90 <= b and b <= 96:
-            return 5
-        else:
-            return 6
+start_year = 2015
+end_year = 2019
+n_simulation = 10
+verbose = True # flag used in simulation
+train_flag = 3 # 1 if trained on first innings data, 2 if trained on second innings data, 3 if trained on all data
+save_directory = "2015-2019-5k-t3"
+
+
+argumentList = sys.argv 
+
+for arg in argumentList[1:]:
+    if arg == "--verbose":
+        verbose = True
+    elif arg[0] == "-":
+        if arg[1] == "n":
+            n_simulation = int(arg[2:])
+        elif arg[1] == "s":
+            start_year = int(arg[2:])
+        elif arg[1] == "e":
+            end_year = int(arg[2:])
+        elif arg[1] == "t":
+            train_flag = int(arg[2:])
     else:
-        if 1 <= b and b <= 36:
-            return 7
-        elif 90 <= b and b <= 96:
-            return 8
-        else:
-            return 9
+        save_directory = arg
+            
+if save_directory[-1] == "/":
+    save_directory = save_directory[:-1]
 
 
-def get_outcome(r, wicket):
-    if wicket is True:
-        return 1
-    elif r == 0:
-        return 2
-    elif r == 1:
-        return 3
-    elif r == 2:
-        return 4
-    elif r == 3:
-        return 5
-    elif r == 4:
-        return 6
-    elif r == 6:
-        return 7
-    else:
-        return 0
+print("Start Year:", start_year)
+print("End Year:", end_year)
+print("Number of simulations:", n_simulation)
+print("Save Directory:", save_directory)
+print("Train flag:", train_flag)
+print("Verbose:", verbose)
 
+deliveries_data, matches, first_innings_data, second_innings_data, both_innings_data = load_data(start_year, end_year)
 
-directory = "data"
+first_innings_data = both_innings_data[both_innings_data["inning"] == 1]
+second_innings_data = both_innings_data[both_innings_data["inning"] == 2]
+print("First innings data size:", len(first_innings_data))
+print("Second innings data size:", len(second_innings_data))
 
-data = pd.read_csv("data/deliveries.csv")
-matches = pd.read_csv("data/matches.csv")
+if train_flag == 1:
+    batsmen, bowlers, batsman_index, bowler_index, batsman_stats, bowler_stats, X, id1, id2, noballs_and_wides = initialise(first_innings_data)
+elif train_flag == 2:
+    batsmen, bowlers, batsman_index, bowler_index, batsman_stats, bowler_stats, X, id1, id2, noballs_and_wides = initialise(second_innings_data)
+else:
+    batsmen, bowlers, batsman_index, bowler_index, batsman_stats, bowler_stats, X, id1, id2, noballs_and_wides = initialise(both_innings_data)
+    
+noballs_and_wides_count = sum(list(noballs_and_wides.values()))
+total_balls = sum([len(X[i]) for i in range(9)]) + noballs_and_wides_count
 
+print("Number of noballs and wides:", noballs_and_wides_count)
+print("Number of balls bowled:", total_balls)
 
-selected_ids = matches[matches["season"] >= 2015]["id"]
-selected_data = data[data["match_id"].isin(selected_ids)]
+for i in range(9):
+    print("Balls in situation %d: %d" % (i+1, len(X[i])))
+    
+model = create_model(batsmen, bowlers, id1, id2, X)
+print("Loaded model.")
 
-noballs_and_wides_count = 0
-noballs_and_wides = {}
-batsmen = []
-bowlers = []
-situation_data = {}
+cutpoints = np.loadtxt(save_directory + "/cutpoints.txt")
+mu_1 = np.loadtxt(save_directory + "/mu_1.txt")
+mu_2 = np.loadtxt(save_directory + "/mu_2.txt")
+delta = np.loadtxt(save_directory + "/delta.txt")
 
+mu_1_sorted = sorted([(mu_1[i], batsmen[i]) for i in range(len(mu_1))])
+mu_2_sorted = sorted([(mu_2[i], bowlers[i]) for i in range(len(mu_2))])
 
-first_innings = selected_data[selected_data["inning"] == 1]
-print(len(first_innings))
-
-
-batsman_index = {}
-bowler_index = {}
-batsmen = first_innings["batsman"].unique()
-bowlers = first_innings["bowler"].unique()
+p = np.zeros(shape = (len(batsmen),len(bowlers),9,7))
 for i in range(len(batsmen)):
-    batsman_index[batsmen[i]] = i
-for i in range(len(bowlers)):
-    bowler_index[bowlers[i]] = i
+    for j in range(len(bowlers)):
+        for l in range(9):
+            for k in range(7):
+                if k == 0:
+                    p[i,j,l,k] = 1/(1 + np.exp(-(cutpoints[l,k] - mu_1[i] + mu_2[j] - delta[l])))
+                elif k == 6:
+                    p[i,j,l,k] = 1 - 1/(1 + np.exp(-(cutpoints[l,k-1] - mu_1[i] + mu_2[j] - delta[l])))
+                else:
+                    p[i,j,l,k] = 1/(1 + np.exp(-(cutpoints[l,k] - mu_1[i] + mu_2[j] - delta[l]))) - 1/(1 + np.exp(-(cutpoints[l,k-1] - mu_1[i] + mu_2[j] - delta[l])))
+                    
+pw = np.zeros(shape=7)          
+for i in range(7):
+    pw[i] = float(noballs_and_wides[i])/noballs_and_wides_count
+v = float(noballs_and_wides_count)/total_balls
 
-X = [[] for i in range(9)]
-id1 = [[] for i in range(9)]
-id2 = [[] for i in range(9)]
+print("Loaded pre-trained parameters.")
 
-for k in range(0, 8):
-    noballs_and_wides[k] = 0
-for l in range(0, 10):
-    situation_data[l] = []
+team1 = "Mumbai Indians" # batting first
+team2 = "Chennai Super Kings" # batting second
 
-current_id = 1
-w = 0
-b = 0
-for i in range(len(first_innings)):
-    ball_data = first_innings.iloc[i]
-    if current_id != ball_data["match_id"]:
-        current_id = ball_data["match_id"]
-        w = 0
-        b = 0
-    b += 1
+batting_order_names_1 = ['RG Sharma', 'E Lewis', 'Ishan Kishan', 'AS Yadav', 'HH Pandya', 'KH Pandya', 'KA Pollard', 'M Ur Rahman', 'M Markande', 'JJ Bumrah', 'MJ McClenaghan']
+batting_order_names_2 = ['SR Watson', 'AT Rayudu', 'SK Raina', 'MS Dhoni', 'KM Jadhav', 'RA Jadeja', 'DJ Bravo', 'Imran Tahir', 'Harbhajan Singh', 'M Wood', 'Imran Tahir']
+batting_order_1 = []
+batting_order_2 = []
+
+for i in range(11):
+    batting_order_1.append(batsman_index[batting_order_names_1[i]])
+    batting_order_2.append(batsman_index[batting_order_names_2[i]])
     
-    batsman = ball_data["batsman"]
-    bowler = ball_data["bowler"]
+bowling_order_names_1 = ['DL Chahar', 'SR Watson', 'DL Chahar', 'SR Watson', 'DL Chahar', 'SR Watson', 'Harbhajan Singh', 'RA Jadeja', 'Harbhajan Singh', 'M Wood', 'Imran Tahir', 'DJ Bravo', 'SR Watson', 'M Wood', 'Imran Tahir', 'DJ Bravo', 'M Wood', 'DJ Bravo', 'M Wood', 'DJ Bravo']
+bowling_order_names_2 = ['MJ McClenaghan', 'Mustafizur Rahman', 'JJ Bumrah', 'HH Pandya', 'MJ McClenaghan', 'HH Pandya', 'M Markande', 'JJ Bumrah', 'M Markande', 'HH Pandya', 'M Markande', 'Mustafizur Rahman', 'M Markande', 'Mustafizur Rahman', 'MJ McClenaghan', 'JJ Bumrah', 'HH Pandya', 'MJ McClenaghan', 'JJ Bumrah', 'Mustafizur Rahman']
+bowling_order_1 = []
+bowling_order_2 = []
+
+for bowler in range(20):
+    bowling_order_1.append(bowler_index[bowling_order_names_1[i]])
+    bowling_order_2.append(bowler_index[bowling_order_names_2[i]])
+
+DLS = pd.read_csv("data/dls-simplified.csv").rename(columns={"Unnamed: 0": "Balls Consumed"}).set_index("Balls Consumed")
+DLS.columns = DLS.columns.astype(int)[::-1]
+DLS.index = DLS.index.astype(int)[::-1]
+
+#Resources lost due to wicket
+y = np.zeros(shape=(121, 10))
+for i in range(10):
+    y[:,i] = DLS.loc[:,(i+1)] - DLS.loc[:,i]
+y = pd.DataFrame(y).iloc[:, ::-1]
+y.columns = [i for i in range(10)]
+
+y = np.zeros(shape=(121, 10))
+for i in range(10):
+    y[:,i] = DLS.loc[:,i] - DLS.loc[:,i+1]
+
+x = np.zeros(shape = (120, 11))
+for i in range(120):
+    x[i,:] = DLS.loc[i,:] - DLS.loc[i+1,:]
+
+def first_innings_simulation(bowling_team, batting_team, bowling_order, batting_order):
     
-    player_dismissed = False
-    if pd.notnull(first_innings["player_dismissed"].iloc[i]):
-        player_dismissed = True
-        w += 1
+    columns=["inning", "batting_team", "bowling_team", "over", "ball", "batsman", "non_striker", "bowler", "wide_runs", "batsman_runs", "total_runs", "player_dismissed"]
+    
+    first_innings = []
+    X1 = [-1 for i in range(120)]
+    Y1 = [0 for i in range(120)]
+    q1 = [0 for i in range(121)]
+    wickets = 0
+    runs = 0
+    
+    q1[0] = (batting_order[0], batting_order[1])
+    
+    balls_bowled = 0
+    
+    for b in range(120):
+
+        if wickets == 10:
+            X1[b] = -1
+
+        else:
+            balls_bowled = b
+            
+            wide_runs = 0 
+            batsman_runs = 0
+            total_runs = 0
+            player_dismissed = None
+            
+            j = bowling_order[int(b/6)]
+
+            bowler = bowlers[j]
+            inning = 1
+            over = int(b/6)
+            ball = (b%6) + 1
+
+            while np.random.uniform(0, 1) < v:       
+                random = np.random.uniform(0, 1)
+                Y1[b] = (random > pw[0]) + (random > pw[0] + pw[1]) + (random > pw[0] + pw[1] + pw[2]) + \
+                        (random > pw[0] + pw[1] + pw[2] + pw[3]) + (random > pw[0] + pw[1] + pw[2] + pw[3] + pw[4]) + \
+                        (random > pw[0] + pw[1] + pw[2] + pw[3] + pw[4] + pw[5])
+                # should fix Y1[b] replaces previous Y1[b]
+
+                wide_runs = 1            
+                
+                if Y1[b] == 0:
+                    wickets += 1 # fix wicket fallen on wide/noball
+
+                elif Y1[b] == 2:
+                    wide_runs = 2
+                    
+                elif Y1[b] == 3:
+                    wide_runs = 3
+                    
+                elif Y1[b] == 4:
+                    wide_runs = 4
+                    
+                elif Y1[b] == 5:
+                    wide_runs = 5
+
+                elif Y1[b] == 6:
+                    wide_runs = 7
+
+                if b:
+                    batsman = batsmen[q1[b-1][0]]
+                    non_striker = batsmen[q1[b-1][1]]
+                else:
+                    batsman = batsmen[q1[b][0]]
+                    non_striker = batsmen[q1[b][1]]
+                
+                total_runs = wide_runs + batsman_runs
+                runs += total_runs
+
+                first_innings.append([inning, batting_team, bowling_team, over, ball, batsman, non_striker, bowler, wide_runs, batsman_runs, total_runs, player_dismissed])
+
+            #bowler to ball 
+
+            l = get_situation(wickets, b+1) - 1
+            rand = np.random.uniform(0, 1)
+            player_dismissed = None
+
+            # following can be simplified
+            q = q1[b][0]
+
+            X1[b] = 0 + (rand > p[q,j,l,0]) + (rand > (p[q,j,l,0]+p[q,j,l,1])) + (rand > (p[q,j,l,0]+p[q,j,l,1]+p[q,j,l,2])) + (rand > (p[q,j,l,0]+p[q,j,l,1]+p[q,j,l,2]+p[q,j,l,3])) + (rand > (p[q,j,l,0]+p[q,j,l,1]+p[q,j,l,2]+p[q,j,l,3]+p[q,j,l,4])) + (rand > (p[q,j,l,0]+p[q,j,l,1]+p[q,j,l,2]+p[q,j,l,3]+p[q,j,l,4]+p[q,j,l,5]))
+            
+#             print("X1[%d] = %d" % (b, X1[b]))
         
-    if ball_data["wide_runs"] >= 1 or ball_data["noball_runs"] >= 1:
-        noballs_and_wides_count += 1
-        runs = ball_data["batsman_runs"]
-        noballs_and_wides[get_outcome(runs, player_dismissed)] += 1
-        continue
-        
-    runs = ball_data["batsman_runs"]
-    l = get_situation(w, b) - 1
-    k = get_outcome(runs, player_dismissed)
-    if k == 0:
-        continue
-    X[l].append(k)
-    id1[l].append(batsman_index[batsman])
-    id2[l].append(bowler_index[bowler])
-    situation_data[l].append((batsman_index[batsman], bowler_index[bowler], k))
+            if X1[b] == 2:
+                batsman_runs = 1
+                
+            elif X1[b] == 3:
+                batsman_runs = 2
 
+            elif X1[b] == 4:
+                batsman_runs = 3
 
-X = np.asarray([np.array(X[i]) for i in range(9)], dtype=object)
-id1 = np.asarray([np.array(id1[i]) for i in range(9)], dtype=object)
-id2 = np.asarray([np.array(id2[i]) for i in range(9)], dtype=object)
+            elif X1[b] == 5 :
+                batsman_runs = 4
 
+            elif X1[b] == 6:
+                batsman_runs = 6
 
-INF = 5
-testval = [[-INF + x * (2 * INF)/5.0 for x in range(6)] for i in range(0, 9)]
-l = [i for i in range(9)]
+            elif X1[b] == 0:
+                wickets += 1
+                player_dismissed = batsmen[q1[b][0]]
+            
+            total_runs = batsman_runs
+            runs += total_runs
+            
+            batsman = batsmen[q1[b][0]]
+            non_striker = batsmen[q1[b][1]]
+            first_innings.append([inning, batting_team, bowling_team, over, ball, batsman, non_striker, bowler, wide_runs, batsman_runs, total_runs, player_dismissed])
 
+            if wickets == 10:
+                continue
+            elif X1[b] == 0:
+#                 print(b, batting_order, q1)
+                q1[b+1] = (batting_order[wickets + 1], q1[b][1])
+            else:
+                q1[b+1] = q1[b]
 
-model = pm.Model()
-Print = tt.printing.Print("shape:")
-with model:
-    delta_1 = pm.Uniform("delta_1", lower=0, upper=1)
-    delta_2 = pm.Uniform("delta_2", lower=0, upper=1)
-    inv_sigma_sqr = pm.Gamma("sigma^-2", alpha=1.0, beta=1.0)
-    inv_tau_sqr = pm.Gamma("tau^-2", alpha=1.0, beta=1.0)
-    mu_1 = pm.Normal("mu_1", mu=0, sigma=1/pm.math.sqrt(inv_tau_sqr), shape=len(batsmen))
-    mu_2 = pm.Normal("mu_2", mu=0, sigma=1/pm.math.sqrt(inv_tau_sqr), shape=len(bowlers))
-    delta = pm.math.ge(l, 3) * delta_1 + pm.math.ge(l, 6) * delta_2
-    Print(delta.shape)
-    Print(mu_1.shape)
-    eta = [pm.Deterministic("eta_" + str(i), mu_1[id1[i]] - mu_2[id2[i]]) for i in range(9)]
-    cutpoints = pm.Normal("cutpoints", mu=[-5,-3,-1,1,3,5], sigma=1/pm.math.sqrt(inv_sigma_sqr), transform=pm.distributions.transforms.ordered, shape=(9,6), testval=testval)
-    Print(cutpoints.shape)
-    X_ = [pm.OrderedLogistic("X_" + str(i), cutpoints=cutpoints[i], eta=eta[i], observed=X[i]-1) for i in range(9)]
+            if ((b+1) % 6) == 0 and not (X1[b] == 2 or X1[b] == 4):
+                q1[b+1] = (q1[b+1][1], q1[b+1][0])
 
+    first_innings_df = pd.DataFrame(first_innings, columns = columns)
+    
+    return (first_innings_df, runs, wickets, balls_bowled+1)
 
-with model:
-    trace = pm.sample(5000)
+# SECOND INNINGS SIMULATION
+def second_innings_simulation(bowling_team, batting_team, bowling_order, batting_order, target):
+    
+    columns=["inning", "batting_team", "bowling_team", "over", "ball", "batsman", "non_striker", "bowler", "wide_runs", "batsman_runs", "total_runs", "player_dismissed"]
+    
+    second_innings = []
+    X2 = [-1 for i in range(120)]
+    Y2 = [0 for i in range(120)]
+    q2 = [0 for i in range(121)]
+    wickets = 0
+    runs = 0
+    
+    q2[0] = (batting_order[0], batting_order[1])
+    
+    balls_bowled = 0
+    
+    for b in range(120):
 
+        balls_bowled = b
 
-az.plot_trace(trace);
+        wide_runs = 0 
+        batsman_runs = 0
+        total_runs = 0
+        player_dismissed = None
 
-az.summary(trace, round_to=2)
+        j = bowling_order[int(b/6)]
 
+        bowler = bowlers[j]
+        inning = 1
+        over = int(b/6)
+        ball = (b%6) + 1
 
+        while np.random.uniform(0, 1) < v:       
+            random = np.random.uniform(0, 1)
+            Y2[b] = (random > pw[0]) + (random > pw[0] + pw[1]) + (random > pw[0] + pw[1] + pw[2]) + \
+                    (random > pw[0] + pw[1] + pw[2] + pw[3]) + (random > pw[0] + pw[1] + pw[2] + pw[3] + pw[4]) + \
+                    (random > pw[0] + pw[1] + pw[2] + pw[3] + pw[4] + pw[5])
+            # should fix Y2[b] replaces previous Y2[b]
 
-for b in range(balls_bowled, 120):
+            wide_runs = 1            
 
-  if wickets_1 == 10:
-    X1[b] = -1
+            if Y2[b] == 0:
+                wickets += 1 # fix wicket fallen on wide/noball
 
-  else:
-    while np.random.uniform(0, 1) < v:       
+            elif Y2[b] == 2:
+                wide_runs = 2
+
+            elif Y2[b] == 3:
+                wide_runs = 3
+
+            elif Y2[b] == 4:
+                wide_runs = 4
+
+            elif Y2[b] == 5:
+                wide_runs = 5
+
+            elif Y2[b] == 6:
+                wide_runs = 7
+
+            if b:
+                batsman = batsmen[q2[b-1][0]]
+                non_striker = batsmen[q2[b-1][1]]
+            else:
+                batsman = batsmen[q2[b][0]]
+                non_striker = batsmen[q2[b][1]]
+
+            total_runs = wide_runs + batsman_runs
+            runs += total_runs
+            second_innings.append([inning, batting_team, bowling_team, over, ball, batsman, non_striker, bowler, wide_runs, batsman_runs, total_runs, player_dismissed])
+
+        if runs > target or wickets == 10:
+            break
+        #estimation of probability of outcome in 2nd inning
+
+        p2 = np.zeros(7)
+
+        l = get_situation(wickets, b+1) - 1
+        q = q2[b][0]
+
+        E1 = p[q,j,l,2] + 2 * p[q,j,l,3] + 3 * p[q,j,l,4] + 4 * p[q,j,l,5] + 6 * p[q,j,l,6] # expected number of runs to be scored 
+        E2 = x[b, wickets] + y[b, wickets] * p[q,j,l,0]                                   # expected proportion of resources consumed
+
+        d = E2/(E2 + y[b, wickets] * (1 - p[q,j,l,0] - p[q,j,l,1]))
+
+        c = DLS.loc[b, wickets] * E1 / ((target - runs + 1) * E2)
+
+        p2[0] = p[q,j,l,0] + d * p[q,j,l,1] * (1 - c)
+        p2[1] = c * p[q,j,l,1]
+
+        for k in range(2,7):
+            p2[k] = ((1 - p[q,j,l,0] - (c + d * (1 - c)) * p[q,j,l,1]) / (1 - p[q,j,l,0] - p[q,j,l,1])) * p[q,j,l,k]
+
         random = np.random.uniform(0, 1)
-        Y1[b] = (random > pw[0]) + (random > pw[0] + pw[1]) + (random > pw[0] + pw[1] + pw[2]) + \
-                (random > pw[0] + pw[1] + pw[2] + pw[3]) + (random > pw[0] + pw[1] + pw[2] + p2[3] + pw[4]) + \
-                (random > pw[0] + pw[1] + pw[2] + pw[3] + pw[4] + pw[5])
-        # should fix Y1[b] replaces previous Y1[b]
-        if Y1[b] == 0:
-          wickets1 += 1
-        elif Y1[b] == 1:
-          runs_1 += 0
-        elif Y1[b] == 2:
-          runs_1 += 1
-        elif Y1[b] == 3:
-          runs_1 += 2
-        elif Y1[b] == 4:
-          runs_1 += 3
-        elif Y1[b] == 5:
-          runs_1 += 4
-        elif Y1[b] == 6:
-          runs_1 += 6  
-      #batsman to face the delivered ball
-      if(b == b0){
-        q1[b] = batsman_order1[1]
-      }else{
-        if(((b-1)/6 - as.integer((b-1)/6)) == 0){       #First ball of any over
-          if(X1[b-1] == 1){                             #Wicket on last ball
-            out_batsman = q1[which(X1[1:(b-1)] == 1)]
-            batsman_batted = batsman_order1[1:(wickets1+2)]
-            batsman_field = setdiff(batsman_batted,out_batsman)
-            q1[b] = setdiff(batsman_field,q1[b-1])
-          }else{
-            if(X1[b-1] == 3 | X1[b-1] == 5){            #Batsmen rotated places while running btw wickets on last ball
-              q1[b] = q1[b-1]
-            }else{
-              out_batsman = q1[which(X1[1:(b-1)] == 1)]
-              batsman_batted = batsman_order1[1:(wickets1+2)]
-              batsman_field = setdiff(batsman_batted,out_batsman)
-              q1[b] = setdiff(batsman_field,q1[b-1])
-            }
-          }
-        }else{
-          if(X1[b-1] == 1){                             #Wicket on last ball
-            q1[b] = batsman_order1[wickets1+2]
-          }else{
-            if(X1[b-1] == 3 | X1[b-1] == 5){            #Batsmen rotated places while running btw wickets on last ball
-              out_batsman = q1[which(X1[1:(b-1)] == 1)]
-              batsman_batted = batsman_order1[1:(wickets1+2)]
-              batsman_field = setdiff(batsman_batted,out_batsman)
-              q1[b] = setdiff(batsman_field,q1[b-1])
-            }else{
-              q1[b] = q1[b-1]
-            }
-          }
-        }  
-      }
-      
-      #bowler to ball 
+        X2[b] = 0 + (random > p2[0]) + (random > (p2[0]+p2[1])) + (random > (p2[0]+p2[1]+p2[2])) + (random > (p2[0]+p2[1]+p2[2]+p2[3])) + (random > (p2[0]+p2[1]+p2[2]+p2[3]+p2[4])) + (random > (p2[0]+p2[1]+p2[2]+p2[3]+p2[4]+p2[5]))
 
-      j = bowling_order_1[ceiling((b+1)/6)]
-      l = get_situation(wickets_1, b) - 1
-      
-      rand = np.random.uniform(0, 1)
-      X1[b] = 1 + rand > p[q1[b]][]
-      X1[b] = 1 + ifelse(random > p[q1[b],j,l,1],1,0) + ifelse(random > (p[q1[b],j,l,1]+p[q1[b],j,l,2]),1,0) + ifelse(random > (p[q1[b],j,l,1]+p[q1[b],j,l,2]+p[q1[b],j,l,3]),1,0) + ifelse(random > (p[q1[b],j,l,1]+p[q1[b],j,l,2]+p[q1[b],j,l,3]+p[q1[b],j,l,4]),1,0) + ifelse(random > (p[q1[b],j,l,1]+p[q1[b],j,l,2]+p[q1[b],j,l,3]+p[q1[b],j,l,4]+p[q1[b],j,l,5]),1,0) + ifelse(random > (p[q1[b],j,l,1]+p[q1[b],j,l,2]+p[q1[b],j,l,3]+p[q1[b],j,l,4]+p[q1[b],j,l,5]+p[q1[b],j,l,6]),1,0)
-      
-      if(X1[b] == 3){
-        runs_1 = runs_1+1
-      }
-      if(X1[b] == 4){
-        runs1 = runs1+2
-      }
-      if(X1[b] == 5){
-        runs1 = runs1+3
-      }
-      if(X1[b] == 6){
-        runs1 = runs1+4
-      }
-      if(X1[b] == 7){
-        runs1 = runs1+6
-      }
-      if(X1[b] == 1){
-        wickets1 = wickets1+1
-      }
-      check = 0
-        
-      }
-    }
-  }
-}
+#             print("X2[%d] = %d" % (b, X2[b]))
+
+        if X2[b] == 2:
+            batsman_runs = 1
+
+        elif X2[b] == 3:
+            batsman_runs = 2
+
+        elif X2[b] == 4:
+            batsman_runs = 3
+
+        elif X2[b] == 5:
+            batsman_runs = 4
+
+        elif X2[b] == 6:
+            batsman_runs = 6
+
+        elif X2[b] == 0:
+            wickets += 1
+            player_dismissed = batsmen[q2[b][0]]
+
+        total_runs = batsman_runs
+        runs += total_runs
+
+        batsman = batsmen[q2[b][0]]
+        non_striker = batsmen[q2[b][1]]
+        second_innings.append([inning, batting_team, bowling_team, over, ball, batsman, non_striker, bowler, wide_runs, batsman_runs, total_runs, player_dismissed])
+
+        if runs > target or wickets == 10:
+            break
+
+        if X2[b] == 0:
+            q2[b+1] = (batting_order[wickets + 1], q2[b][1])
+        else:
+            q2[b+1] = q2[b]
+
+        if ((b+1) % 6) == 0 and not (X2[b] == 2 or X2[b] == 4):
+            q2[b+1] = (q2[b+1][1], q2[b+1][0])
+    
+    
+    second_innings_df = pd.DataFrame(second_innings, columns = columns)
+    
+    return (second_innings_df, runs, wickets, balls_bowled+1)
+
+def swap(a, b):
+    tmp = a
+    a = b
+    b = tmp
+    return (a,b)
+
+team1, team2 = swap(team1, team2)
+bowling_order_1, bowling_order_2 = swap(bowling_order_1, bowling_order_2)
+batting_order_1, batting_order_2 = swap(batting_order_1, batting_order_2)
+
+print(team1, "vs", team2)
+print("Team batting first:", team1)
+print()
+print("Beginning simulation...")
+print()
+
+average_fi_runs = 0
+average_fi_wickets = 0
+average_si_runs = 0
+average_si_wickets = 0
+winner1 = 0
+winner2 = 0
+tie = 0
+
+n_simulation = 1000
+verbose = False
+
+for i in range(n_simulation):
+    first_innings_df, runs1, wickets1, balls1 = first_innings_simulation(team2, team1, bowling_order_1, batting_order_1)
+    second_innings_df, runs2, wickets2, balls2 = second_innings_simulation(team1, team2, bowling_order_2, batting_order_2, runs1)
+    if verbose:
+        print("Simulation number: ", i+1)
+        print("First Innings Score: %d-%d (%d.%d)  " % (runs1, wickets1, balls1//6, (balls1%6)))
+        print("Second Innings Score: %d-%d (%d.%d) " % (runs2, wickets2, balls2//6, (balls2%6)))
+    if runs1 > runs2:
+        winner1 += 1
+        if verbose:
+            print("Winner:", team1)
+    elif runs2 > runs1:
+        winner2 += 1
+        if verbose:
+            print("Winner:", team2)
+    else:
+        tie += 1
+        if verbose:
+            print("Its a tie!")
+            
+    average_fi_runs += runs1
+    average_fi_wickets += wickets1
+    
+    average_si_runs += runs2
+    average_si_wickets += wickets2
+
+average_fi_runs /= n_simulation
+average_fi_wickets /= n_simulation
+average_si_runs /= n_simulation
+average_si_wickets /= n_simulation
+
+print()
+print()
+print("Average First Innings Score %d-%d: " % (int(average_fi_runs), int(average_fi_wickets)))
+print(team1 + " wins:", winner1)
+print(team2 + " wins:", winner2)
+print("Ties:", tie)
