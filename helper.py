@@ -120,6 +120,7 @@ def initialise(data):
         X[l].append(k)
         id1[l].append(i)
         id2[l].append(j)
+#         seasons[l].append(ball_data["season"])
 
         batsman_stats[i]["M"].add(current_id)
         batsman_stats[i]["BF"] += 1
@@ -127,7 +128,10 @@ def initialise(data):
         batsman_stats[i]["4s"] += (runs == 4)
         batsman_stats[i]["6s"] += (runs == 6)
         if player_dismissed:
-            batsman_stats[batsman_index[player_dismissed]]["Outs"] += (player_dismissed != None)
+            try:
+                batsman_stats[batsman_index[player_dismissed]]["Outs"] += (player_dismissed != None)
+            except:
+                pass
 
         bowler_stats[j]["M"].add(current_id)
         bowler_stats[j]["B"] += 1
@@ -162,20 +166,26 @@ def initialise(data):
     bowler_stats = pd.DataFrame(bowler_stats).sort_values(by=["Avg"])
     return (batsmen, bowlers, batsman_index, bowler_index, batsman_stats, bowler_stats, X, id1, id2, noballs_and_wides)
 
-def load_data(start_year, end_year):
+def load_data(start_year, end_year):      
     
-    deliveries_data = pd.read_csv("data/deliveries.csv")
-    matches = pd.read_csv("data/matches.csv")
-    matches = matches.set_index("id")
-    seasons = [matches.loc[deliveries_data.iloc[i]["match_id"]]["season"] for i in range(len(deliveries_data))]
+    # very messy here. please make sure dataset has all int/string values with NaN for player_dismissed, and dropped rows if bowler or batsman columns have any nan values
     
-    deliveries_data["season"] = seasons
-    delivieres_data = deliveries_data.sort_values("season")
-    
-    selected_ids = matches[(matches["season"] >= start_year) & (matches["season"] <= end_year)].index
-    both_innings_data = deliveries_data[deliveries_data["match_id"].isin(selected_ids)]
-    
+    deliveries_data = pd.read_csv("data/del_puneet.csv")
+#     deliveries_data = pd.read_csv("data/ipl_cricsheet_deliveries.csv")
+
+
+    deliveries_data.dropna(subset = ["bowler"], inplace=True)
+    deliveries_data.dropna(subset = ["batsman"], inplace=True)
+    deliveries_data["bowler"] = deliveries_data["bowler"].astype(int)
+    deliveries_data["batsman"] = deliveries_data["batsman"].astype(int)
+    deliveries_data = deliveries_data.replace(np.nan, -1, regex=True)
+    deliveries_data["player_dismissed"] = deliveries_data["player_dismissed"].astype(int)
+    deliveries_data = deliveries_data.replace(-1, np.nan, regex=True)
+
+#     deliveries_data = deliveries_data.replace(np.nan, -1, regex=True)
+#     deliveries_data = deliveries_data.sort_values("date", kind='mergesort')
+    both_innings_data = deliveries_data[(deliveries_data["season"] >= start_year) & (deliveries_data["season"] <= end_year)]
     first_innings_data = both_innings_data[both_innings_data["inning"] == 1]
     second_innings_data = both_innings_data[both_innings_data["inning"] == 2]
     
-    return (deliveries_data, matches, first_innings_data, second_innings_data, both_innings_data)
+    return (first_innings_data, second_innings_data, both_innings_data)

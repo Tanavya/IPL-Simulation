@@ -17,15 +17,15 @@ import pandas as pd
 import sys
 from model import create_model
 from helper import initialise, load_data, get_situation, get_outcome
+import pickle
 
-print("Running on PyMC3 v{}".format(pm.__version__))
+start_year = 2008
+end_year = 2020
+n_iter = 500
+train_flag = 3 # 1 if train on First Innings, 2 if train on Second Innings, 3 if train on all data
+save_directory = "latest_save" # 2019-2019-500-t3
+target_accept = 0.95
 
-start_year = 2015
-end_year = 2019
-n_iter = 5000
-train_flag = 1 # 1 if train on First Innings, 2 if train on Second Innings, 3 if train on all data
-save_directory = "latest_save"
-target_accept = 0.9
 
 argumentList = sys.argv 
 
@@ -54,10 +54,7 @@ print("Train Flag:", train_flag)
 print("Save Directory:", save_directory)
 print("Target Accept:", target_accept)
 
-deliveries_data, matches, first_innings_data, second_innings_data, both_innings_data = load_data(start_year, end_year)
-
-first_innings_data = both_innings_data[both_innings_data["inning"] == 1]
-second_innings_data = both_innings_data[both_innings_data["inning"] == 2]
+first_innings_data, second_innings_data, both_innings_data = load_data(start_year, end_year)
 
 print("First innings data size:", len(first_innings_data))
 print("Second innings data size:", len(second_innings_data))
@@ -85,21 +82,18 @@ print("Model initialised.")
 with model:
     trace = pm.sample(n_iter, target_accept=target_accept)
 
-# two ways to save_trace. necessary only for diagnostics, can be removed:
-
 with model:
     pm.save_trace(trace, directory=save_directory + "/trace", overwrite=True)
 
 with open(save_directory + "/trace.pkl", 'wb') as buff:
     pickle.dump(trace, buff)
 
-
 cutpoints = np.mean(trace.get_values("cutpoints", burn=n_iter//2, combine=True), axis=0)
 mu_1 = np.mean(trace.get_values("mu_1", burn=n_iter//2, combine=True), axis=0)
 mu_2 = np.mean(trace.get_values("mu_2", burn=n_iter//2, combine=True), axis=0)
 
 delta_1 = np.mean(trace.get_values("delta_1", burn=n_iter//2, combine=True), axis=0)
-delta_2 = np.mean(trace.get_values("delta_1", burn=n_iter//2, combine=True), axis=0)
+delta_2 = np.mean(trace.get_values("delta_2", burn=n_iter//2, combine=True), axis=0)
 delta = np.greater_equal([i for i in range(9)], 3) * delta_1 + np.greater_equal([i for i in range(9)], 6) * delta_2
 
 # save the parameters
@@ -107,4 +101,8 @@ np.savetxt(save_directory + "/cutpoints.txt", cutpoints)
 np.savetxt(save_directory + "/mu_1.txt", mu_1)
 np.savetxt(save_directory + "/mu_2.txt", mu_2)
 np.savetxt(save_directory + "/delta.txt", delta)
+
+summary = az.summary(trace, round_to=5)
+summary.to_csv(save_directory + "/summary.csv", index=False)
+
 
