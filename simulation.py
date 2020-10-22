@@ -87,7 +87,76 @@ delta = np.loadtxt(save_directory + "/delta.txt")
 mu_1_sorted = sorted([(mu_1[i], batsmen[i]) for i in range(len(mu_1))])
 mu_2_sorted = sorted([(mu_2[i], bowlers[i]) for i in range(len(mu_2))])
 
+pw = np.zeros(shape=7)          
+for i in range(7):
+    pw[i] = float(noballs_and_wides[i])/noballs_and_wides_count
+v = float(noballs_and_wides_count)/total_balls
+
+print("Loaded pre-trained parameters.")
+
+DLS = pd.read_csv("data/dls-simplified.csv").rename(columns={"Unnamed: 0": "Balls Consumed"}).set_index("Balls Consumed")
+DLS.columns = DLS.columns.astype(int)[::-1]
+DLS.index = DLS.index.astype(int)[::-1]
+
+#Resources lost due to wicket
+y = np.zeros(shape=(121, 10))
+for i in range(10):
+    y[:,i] = DLS.loc[:,i] - DLS.loc[:,i+1]
+
+x = np.zeros(shape = (120, 11))
+for i in range(120):
+    x[i,:] = DLS.loc[i,:] - DLS.loc[i+1,:]
+
+team1 = "Delhi Capitals" # batting first
+team2 = "Rajashtan Royals" # batting second
+
+batting_order_names_1 = ['PP Shaw', 'S Dhawan', 'AM Rahane', 'SS Iyer', 'MP Stoinis', 'AT Carey', 'AR Patel', 'R Ashwin', 'K Rabada', 'A Nortje', 'T Deshpande']
+batting_order_names_2 = ['BA Stokes', 'JC Buttler', 'SPD Smith', 'SV Samson', 'RV Uthappa', 'R Parag', 'R Tewatia', 'JC Archer', 'S Gopal', 'JD Unadkat', 'Kartik Tyagi']
+
+batting_order_1 = []
+batting_order_2 = []
+debutant_batsmen = []
+
+for i in range(11):
+    for b in [batting_order_names_1[i], batting_order_names_2[i]]:
+        if b not in batsman_index:
+            batsman_index[b] = len(batsmen) + len(debutant_batsmen)
+            debutant_batsmen.append(b)
+            
+for i in range(11):
+    batting_order_1.append(batsman_index[batting_order_names_1[i]])
+    batting_order_2.append(batsman_index[batting_order_names_2[i]])
+    
+bowling_order_names_1 = ['JC Archer', 'JD Unadkat', 'JC Archer', 'Kartik Tyagi', 'BA Stokes', 'Kartik Tyagi', 'S Gopal', 'R Tewatia', 'S Gopal', 'BA Stokes', 'R Tewatia', 'S Gopal', 'R Tewatia', 'S Gopal', 'JD Unadkat', 'Kartik Tyagi', 'JC Archer', 'Kartik Tyagi', 'JC Archer', 'JD Unadkat']
+bowling_order_names_2 = ['K Rabada', 'T Deshpande', 'A Nortje', 'R Ashwin', 'A Nortje', 'K Rabada', 'AR Patel', 'R Ashwin', 'AR Patel', 'R Ashwin', 'T Deshpande', 'AR Patel', 'A Nortje', 'AR Patel', 'T Deshpande', 'R Ashwin', 'K Rabada', 'A Nortje', 'K Rabada', 'T Deshpande']
+
+bowling_order_1 = []
+bowling_order_2 = []
+debutant_bowlers = []
+
+for bowler in range(20):
+    for b in [bowling_order_names_1[i], bowling_order_names_2[i]]:
+        if b not in bowler_index:
+            bowler_index[b] = len(bowlers) + len(debutant_bowlers)
+            debutant_bowlers.append(b)
+
+for i in range(20):
+    bowling_order_1.append(bowler_index[bowling_order_names_1[i]])
+    bowling_order_2.append(bowler_index[bowling_order_names_2[i]])
+
+print("Debutant Batsmen:", debutant_batsmen)
+print("Debutant Bowlers:", debutant_bowlers)
+
+batsmen = np.append(batsmen, debutant_batsmen)
+bowlers = np.append(bowlers, debutant_bowlers)
+
 p = np.zeros(shape = (len(batsmen),len(bowlers),9,7))
+
+for i in range(len(debutant_batsmen)):
+    mu_1 = np.append(mu_1, 0)
+for i in range(len(debutant_bowlers)):
+    mu_2 = np.append(mu_2, 0)
+
 for i in range(len(batsmen)):
     for j in range(len(bowlers)):
         for l in range(9):
@@ -99,69 +168,18 @@ for i in range(len(batsmen)):
                 else:
                     p[i,j,l,k] = 1/(1 + np.exp(-(cutpoints[l,k] - mu_1[i] + mu_2[j] - delta[l]))) - 1/(1 + np.exp(-(cutpoints[l,k-1] - mu_1[i] + mu_2[j] - delta[l])))
                     
-pw = np.zeros(shape=7)          
-for i in range(7):
-    pw[i] = float(noballs_and_wides[i])/noballs_and_wides_count
-v = float(noballs_and_wides_count)/total_balls
 
-print("Loaded pre-trained parameters.")
-
-team1 = "Mumbai Indians" # batting first
-team2 = "Chennai Super Kings" # batting second
-
-batting_order_names_1 = ['RG Sharma', 'E Lewis', 'Ishan Kishan', 'AS Yadav', 'HH Pandya', 'KH Pandya', 'KA Pollard', 'M Ur Rahman', 'M Markande', 'JJ Bumrah', 'MJ McClenaghan']
-batting_order_names_2 = ['SR Watson', 'AT Rayudu', 'SK Raina', 'MS Dhoni', 'KM Jadhav', 'RA Jadeja', 'DJ Bravo', 'Imran Tahir', 'Harbhajan Singh', 'M Wood', 'Imran Tahir']
-batting_order_1 = []
-batting_order_2 = []
-
-for i in range(11):
-    batting_order_1.append(batsman_index[batting_order_names_1[i]])
-    batting_order_2.append(batsman_index[batting_order_names_2[i]])
-    
-bowling_order_names_1 = ['DL Chahar', 'SR Watson', 'DL Chahar', 'SR Watson', 'DL Chahar', 'SR Watson', 'Harbhajan Singh', 'RA Jadeja', 'Harbhajan Singh', 'M Wood', 'Imran Tahir', 'DJ Bravo', 'SR Watson', 'M Wood', 'Imran Tahir', 'DJ Bravo', 'M Wood', 'DJ Bravo', 'M Wood', 'DJ Bravo']
-bowling_order_names_2 = ['MJ McClenaghan', 'Mustafizur Rahman', 'JJ Bumrah', 'HH Pandya', 'MJ McClenaghan', 'HH Pandya', 'M Markande', 'JJ Bumrah', 'M Markande', 'HH Pandya', 'M Markande', 'Mustafizur Rahman', 'M Markande', 'Mustafizur Rahman', 'MJ McClenaghan', 'JJ Bumrah', 'HH Pandya', 'MJ McClenaghan', 'JJ Bumrah', 'Mustafizur Rahman']
-bowling_order_1 = []
-bowling_order_2 = []
-
-for bowler in range(20):
-    bowling_order_1.append(bowler_index[bowling_order_names_1[i]])
-    bowling_order_2.append(bowler_index[bowling_order_names_2[i]])
-
-DLS = pd.read_csv("data/dls-simplified.csv").rename(columns={"Unnamed: 0": "Balls Consumed"}).set_index("Balls Consumed")
-DLS.columns = DLS.columns.astype(int)[::-1]
-DLS.index = DLS.index.astype(int)[::-1]
-
-#Resources lost due to wicket
-y = np.zeros(shape=(121, 10))
-for i in range(10):
-    y[:,i] = DLS.loc[:,(i+1)] - DLS.loc[:,i]
-y = pd.DataFrame(y).iloc[:, ::-1]
-y.columns = [i for i in range(10)]
-
-y = np.zeros(shape=(121, 10))
-for i in range(10):
-    y[:,i] = DLS.loc[:,i] - DLS.loc[:,i+1]
-
-x = np.zeros(shape = (120, 11))
-for i in range(120):
-    x[i,:] = DLS.loc[i,:] - DLS.loc[i+1,:]
-
-def first_innings_simulation(bowling_team, batting_team, bowling_order, batting_order):
+def first_innings_simulation(bowling_team, batting_team, bowling_order, batting_order, first_innings = [], wickets = 0, runs = 0, balls_bowled = 0):
     
     columns=["inning", "batting_team", "bowling_team", "over", "ball", "batsman", "non_striker", "bowler", "wide_runs", "batsman_runs", "total_runs", "player_dismissed"]
     
-    first_innings = []
     X1 = [-1 for i in range(120)]
     Y1 = [0 for i in range(120)]
     q1 = [0 for i in range(121)]
-    wickets = 0
-    runs = 0
     
-    q1[0] = (batting_order[0], batting_order[1])
-    
-    balls_bowled = 0
-    
-    for b in range(120):
+    q1[balls_bowled] = (batting_order[wickets], batting_order[wickets + 1])
+        
+    for b in range(balls_bowled, 120):
 
         if wickets == 10:
             X1[b] = -1
@@ -275,21 +293,16 @@ def first_innings_simulation(bowling_team, batting_team, bowling_order, batting_
     return (first_innings_df, runs, wickets, balls_bowled+1)
 
 # SECOND INNINGS SIMULATION
-def second_innings_simulation(bowling_team, batting_team, bowling_order, batting_order, target):
+def second_innings_simulation(bowling_team, batting_team, bowling_order, batting_order, target, second_innings = [], wickets = 0, runs = 0, balls_bowled = 0):
     
     columns=["inning", "batting_team", "bowling_team", "over", "ball", "batsman", "non_striker", "bowler", "wide_runs", "batsman_runs", "total_runs", "player_dismissed"]
     
-    second_innings = []
     X2 = [-1 for i in range(120)]
     Y2 = [0 for i in range(120)]
     q2 = [0 for i in range(121)]
-    wickets = 0
-    runs = 0
     
-    q2[0] = (batting_order[0], batting_order[1])
-    
-    balls_bowled = 0
-    
+    q2[balls_bowled] = (batting_order[wickets], batting_order[wickets + 1])
+        
     for b in range(120):
 
         balls_bowled = b
@@ -358,8 +371,11 @@ def second_innings_simulation(bowling_team, batting_team, bowling_order, batting
 
         d = E2/(E2 + y[b, wickets] * (1 - p[q,j,l,0] - p[q,j,l,1]))
 
-        c = DLS.loc[b, wickets] * E1 / ((target - runs + 1) * E2)
-
+        c = min(DLS.loc[b, wickets] * E1 / ((target - runs + 1) * E2), 1)
+        
+        if d > 1 or d < 0:
+            print(c,d)
+        
         p2[0] = p[q,j,l,0] + d * p[q,j,l,1] * (1 - c)
         p2[1] = c * p[q,j,l,1]
 
@@ -413,16 +429,6 @@ def second_innings_simulation(bowling_team, batting_team, bowling_order, batting
     
     return (second_innings_df, runs, wickets, balls_bowled+1)
 
-def swap(a, b):
-    tmp = a
-    a = b
-    b = tmp
-    return (a,b)
-
-team1, team2 = swap(team1, team2)
-bowling_order_1, bowling_order_2 = swap(bowling_order_1, bowling_order_2)
-batting_order_1, batting_order_2 = swap(batting_order_1, batting_order_2)
-
 print(team1, "vs", team2)
 print("Team batting first:", team1)
 print()
@@ -437,12 +443,13 @@ winner1 = 0
 winner2 = 0
 tie = 0
 
-n_simulation = 1000
-verbose = False
+n_simulation = 1
+verbose = True
 
 for i in range(n_simulation):
     first_innings_df, runs1, wickets1, balls1 = first_innings_simulation(team2, team1, bowling_order_1, batting_order_1)
     second_innings_df, runs2, wickets2, balls2 = second_innings_simulation(team1, team2, bowling_order_2, batting_order_2, runs1)
+    
     if verbose:
         print("Simulation number: ", i+1)
         print("First Innings Score: %d-%d (%d.%d)  " % (runs1, wickets1, balls1//6, (balls1%6)))
@@ -459,13 +466,15 @@ for i in range(n_simulation):
         tie += 1
         if verbose:
             print("Its a tie!")
-            
+
     average_fi_runs += runs1
     average_fi_wickets += wickets1
-    
+
     average_si_runs += runs2
     average_si_wickets += wickets2
-
+    
+    for batsman in batting_order_1:
+        
 average_fi_runs /= n_simulation
 average_fi_wickets /= n_simulation
 average_si_runs /= n_simulation
